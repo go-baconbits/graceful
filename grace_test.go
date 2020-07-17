@@ -3,6 +3,7 @@ package graceful_test
 import (
 	"bytes"
 	"context"
+
 	"fmt"
 	"net/http"
 	"os"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/go-baconbits/graceful"
+	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -21,6 +23,58 @@ func ExampleRunUntilShutdown() {
 	graceful.RunUntilShutdown(srv.ListenAndServe, srv.Shutdown)
 }
 
+func ExampleRunUntilCancel() {
+	srv := http.Server{
+		Addr: ":0",
+	}
+	otherStuff := func() {
+		time.Sleep(1 * time.Second)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go graceful.RunUntilCancel(ctx, srv.ListenAndServe, srv.Shutdown)
+	otherStuff()
+	cancel()
+}
+
+func TestRunUntilCancel(t *testing.T) {
+	fooErr := errors.New("foo")
+	fooRunErr := errors.Wrap(fooErr, "Encountered an error while running runFunc")
+	testdata := []struct {
+		RunErr     error
+		CleanupErr error
+		WantErr    error
+		WantFlag   int
+	}{
+		{nil, nil, nil, 3},
+		{nil, fooErr, fooErr, 3},
+		{fooErr, nil, fooRunErr, 1},
+		{fooErr, nil, fooRunErr, 1},
+		{fooErr, errors.New("bar"), fooRunErr, 1},
+	}
+	for _, testcase := range testdata {
+		t.Run("", func(t *testing.T) {
+			flag := 0
+			ctx, cancel := context.WithCancel(context.Background())
+			run := func() error {
+				flag += 1
+				cancel()
+				return testcase.RunErr
+			}
+			cleanup := func(context.Context) error {
+				flag += 2
+				return testcase.CleanupErr
+			}
+			err := graceful.RunUntilCancel(ctx, run, cleanup)
+			assert.Equal(t, testcase.WantFlag, flag)
+			if testcase.WantErr != nil {
+				assert.EqualError(t, err, testcase.WantErr.Error())
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
 func TestRunUntilShutdown(t *testing.T) {
 	program := func() {
 		do := func() error {
@@ -33,7 +87,7 @@ func TestRunUntilShutdown(t *testing.T) {
 		}
 		graceful.RunUntilShutdown(do, shutdown)
 	}
-	stdout, err := testAsDifferentProcess(t, program, os.Interrupt)
+	stdout, err := testAsDifferentProcess(t, program, graceful.ShutdownSignals()...)
 	assert.NoError(t, err)
 	assert.Equal(t, stdout, "doing something\nshutting down\n")
 }

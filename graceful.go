@@ -17,11 +17,11 @@ func RunUntilShutdown(runFunc func() error, cleanUpFunc func(context.Context) er
 	DoAfterSignal(func(os.Signal) {
 		cancelFunc()
 	}, ShutdownSignals()[0], ShutdownSignals()[1:]...)
-	return RunUntilCancel(runFunc, cleanUpFunc, ctx)
+	return RunUntilCancel(ctx, runFunc, cleanUpFunc)
 }
 
 // RunUntilCancel runs something (typically a server) until the provided context receives the done signal, when the signal is received the shutdownFunc is executed. Inspired by https://medium.com/@pinkudebnath/graceful-shutdown-of-golang-servers-using-context-and-os-signals-cc1fa2c55e97
-func RunUntilCancel(runFunc func() error, cleanUpFunc func(context.Context) error, ctxRun context.Context) error {
+func RunUntilCancel(ctxRun context.Context, runFunc func() error, cleanUpFunc func(context.Context) error) error {
 	var err error
 	go func() {
 		err = runFunc()
@@ -30,10 +30,10 @@ func RunUntilCancel(runFunc func() error, cleanUpFunc func(context.Context) erro
 	ctxShutDown, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err != nil {
-		return errors.Wrap(err, "Encountered an Error while running runFunc")
+		return errors.Wrap(err, "Encountered an error while running runFunc")
 	}
 	err = cleanUpFunc(ctxShutDown)
-	return nil
+	return err
 }
 
 // DoAfterSignal executes f once any of the signals specified is received.
@@ -51,6 +51,7 @@ func DoAfterSignal(f func(os.Signal), sig1 os.Signal, sigs ...os.Signal) {
 	}()
 }
 
+//ShutdownSignals returns a list of the signals that shut down the application
 func ShutdownSignals() []os.Signal {
 	return []os.Signal{syscall.SIGINT, syscall.SIGQUIT, syscall.SIGTERM, syscall.SIGHUP}
 }
